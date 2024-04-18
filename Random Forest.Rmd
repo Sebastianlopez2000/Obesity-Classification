@@ -1,0 +1,1118 @@
+---
+title: "DDA obesity"
+author: "Group 45"
+date: "2024-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Installing and loading packages (if nessesery)
+
+```{r}
+listOfPackages <- c("ggplot2", "pheatmap", "tidyverse", "viridis", "RColorBrewer", "factoextra", "ggstatsplot", "psych", "Hmisc", "tidyr", "dplyr", "reshape2", "corrplot", "ggcorrplot", "stringr", "caret", "base", "randomForest", "dbscan", "stats","cluster","keras", "neuralnet","tree", "ROCR", "pROC", "readr")
+for (i in listOfPackages){
+     if(! i %in% installed.packages()){
+         install.packages(i, dependencies = TRUE)
+     }
+     require(i, character.only = TRUE)
+}
+```
+
+# 2. Loading the data
+```{r}
+# Load and inspect the data
+data <- read.csv("Obesity_CW.csv")
+str(data)
+```
+
+```{r}
+# Summary report of the variables
+summary(data)
+```
+Based on this summary statistic, the mean observation is 24 years of age, 170cm in height and weighs 88kg. We assume this is the healthy, normal weight.
+
+```{r}
+# Check for missingness
+colSums(is.na(data))
+```
+
+```{r}
+# Amend incorrectly loaded variables
+data$Gender <- as.factor(data$Gender)
+data$family_history_with_overweight <- as.factor(data$family_history_with_overweight)
+data$FAVC <- as.factor(data$FAVC)
+data$CAEC <- as.factor(data$CAEC)
+data$SMOKE <- as.factor(data$SMOKE)
+data$SCC <- as.factor(data$SCC)
+data$CALC <- as.factor(data$CALC)
+data$MTRANS <- as.factor(data$MTRANS)
+
+# Check the change has happened
+str(data)
+```
+
+```{r}
+# Understand the data
+describe(data)
+```
+
+# 3. Data cleaning
+```{r}
+# Make the column names more understandable
+names(data) [names(data) == 'FAVC'] <- 'FCHighCal'
+names(data) [names(data) == 'FCVC'] <- 'FCvegetables'
+names(data) [names(data) == 'NCP'] <- 'NumMainMeals'
+names(data) [names(data) == 'CAEC'] <- 'ConsFoodBetwMeal'
+names(data) [names(data) == 'CH2O'] <- 'DayWater'
+names(data) [names(data) == 'CALC'] <- 'Alcohol'
+names(data) [names(data) == 'SCC'] <- 'MonitorCalory'
+names(data) [names(data) == 'FAF'] <- 'PhysicalActFreq'
+names(data) [names(data) == 'NObeyesdad'] <- 'ObesityLevel'
+names(data) [names(data) == 'TUE'] <- 'TechUsePerDay'
+```
+
+```{r}
+# Deleting id column as it's unneeded
+data <- data %>% 
+  select(-id)
+
+# Convert the Age column to integer
+data$Age <- as.integer(floor(data$Age))
+
+# Converting Height into cm 
+data$Height <- data$Height * 100
+data$Height <- signif(data$Height, digits = 3)
+
+# Converting Weight into integer
+data$Weight <- data$Weight * 100
+data$Weight <- signif(data$Weight, digits = 3)
+data$Weight <- data$Weight %/% 100
+
+# Remove leading and trailing white space & standardize levels in Gender
+data$Gender <- trimws(tolower(data$Gender))
+```
+
+```{r}
+# Convert brinary strings to integers
+# In Gender, convert 'male' 'female' to 1 0 respectively
+data <- data %>%
+  mutate(Gender = ifelse(Gender == "male", 1, 0))
+
+# In family_history_with_overweight, convert 'yes' 'no' to 1 0 respectively
+data <- data %>%
+  mutate(family_history_with_overweight = ifelse(family_history_with_overweight == "yes", 1, 0))
+
+# In FCHCfood, convert 'yes' 'no' to 1 0 respectively
+data <- data %>%
+  mutate(FCHighCal = ifelse(FCHighCal== "yes", 1, 0))
+
+# In SMOKE, convert 'yes' 'no' to 1 0 respectively
+data <- data %>%
+  mutate(SMOKE = ifelse(SMOKE== "yes", 1, 0))
+
+# In MonitorCalory, convert 'yes' 'no' to 1 0 respectively
+data <- data %>%
+  mutate(MonitorCalory = ifelse(MonitorCalory== "yes", 1, 0))
+```
+
+```{r}
+# Convert string factors to numerical levels
+# Convert levels in ConsFoodBetwMeal to numerical values
+data <- data %>%
+  mutate(ConsFoodBetwMeal = recode_factor(ConsFoodBetwMeal,
+                                          "Always" = 1,
+                                          "Frequently" = 2,
+                                          "Sometimes" = 3,
+                                          "no" = 4))
+data$ConsFoodBetwMeal <- as.numeric(data$ConsFoodBetwMeal)
+
+# Convert levels in Alcohol to numerical values
+data$Alcohol <- as.numeric(recode_factor(data$Alcohol,
+                                         "Frequently" = 1,
+                                         "Sometimes" = 2,
+                                         "no" = 3))
+
+# Convert levels in MTRANS to numerical values
+data$MTRANS <- as.numeric(recode_factor(data$MTRANS,
+                                        "Automobile" = 1,
+                                        "Bike" = 2,
+                                        "Motorbike" = 3,
+                                        "Public_Transportation" = 4,
+                                        "Walking" = 5))
+```
+
+```{r}
+# Round FCvegetables, NumMainMeals, DayWater, PhysicalActFreq, TUE to 2 decimals
+data$FCvegetables <- round(data$FCvegetables, digits = 1)
+data$NumMainMeals <- round(data$NumMainMeals, digits = 1)
+data$DayWater <- round(data$DayWater, digits = 1)
+data$PhysicalActFreq <- round(data$PhysicalActFreq, digits = 1)
+data$TechUsePerDay <- round(data$TechUsePerDay, digits = 1)
+```
+
+```{r}
+# Converting ObesityLevel levels to numeric values
+data$ObesityLevel <- as.character(data$ObesityLevel)  # Converting to character before changing to numeric
+
+data$ObesityLevel[data$ObesityLevel == "Insufficient_Weight"] <- "0"
+data$ObesityLevel[data$ObesityLevel == "Normal_Weight"] <- "1"
+data$ObesityLevel[data$ObesityLevel == "Overweight_Level_I"] <- "2"
+data$ObesityLevel[data$ObesityLevel == "Overweight_Level_II"] <- "3"
+data$ObesityLevel[data$ObesityLevel == "Obesity_Type_I"] <- "4"
+data$ObesityLevel[data$ObesityLevel == "Obesity_Type_II"] <- "5"
+data$ObesityLevel[data$ObesityLevel == "Obesity_Type_III"] <- "6"
+
+data$ObesityLevel<- as.factor(data$ObesityLevel) # Convert to factor
+```
+
+```{r}
+# Amend incorrectly loaded variables
+data$Gender <- as.factor(data$Gender)
+data$family_history_with_overweight <- as.factor(data$family_history_with_overweight)
+data$FCHighCal <- as.factor(data$FCHighCal)
+data$ConsFoodBetwMeal <- as.factor(data$ConsFoodBetwMeal)
+data$SMOKE <- as.factor(data$SMOKE)
+data$MonitorCalory <- as.factor(data$MonitorCalory)
+data$Alcohol <- as.factor(data$Alcohol)
+data$MTRANS <- as.factor(data$MTRANS)
+data$ObesityLevel <- as.factor(data$ObesityLevel)
+
+# Print factor levels
+levels_of_variables <- sapply(data, function(x) if(is.factor(x)) levels(x) else NA)
+print(levels_of_variables)
+```
+
+# Exploratory Data Analysis
+
+```{r}
+# Analyze gender
+gender_counts <- table(data$Gender)
+gender_proportions <- prop.table(gender_counts)
+gender_summary <- data.frame(Gender = names(gender_counts), Count = gender_counts, Proportion = gender_proportions)
+
+# Visualize gender distribution
+ggplot(gender_summary, aes(x = Gender, y = Proportion.Freq)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "blue") +
+  labs(x = "Gender", y = "Proportion", title = "Distribution of Gender")
+
+# Analyze family history of overweight
+fam_history_counts <- table(data$family_history_with_overweight)
+fam_history_proportions <- prop.table(fam_history_counts)
+fam_history_summary <- data.frame(Family_History = names(fam_history_counts), Count = fam_history_counts, Proportion = fam_history_proportions)
+
+# Visualize family history of overweight distribution
+ggplot(fam_history_summary, aes(x = Family_History, y = Proportion.Freq)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "blue") +
+  labs(x = "Family History of Overweight", y = "Proportion", title = "Distribution of Family History of Overweight")+
+  scale_x_discrete(labels = c("Female", "Male"))
+```
+In the first graphic we see that this popultion is split evenly between Males and Females. We also see that there is a relationship between familial history of obesity - especially among males.
+
+```{r}
+# Calculate summary statistics for age within each level of physical activity frequency
+age_summary <- aggregate(data$Age, by = list(data$PhysicalActFreq), FUN = summary)
+
+# Visualize the distribution of age across different levels of physical activity frequency
+ggplot(data, aes(x = factor(PhysicalActFreq), y = Age)) +
+  geom_boxplot(fill = "skyblue", color = "blue") +
+  labs(x = "Physical Activity Frequency", y = "Age", title = "Distribution of Age Across Physical Activity Frequency Levels") +
+  theme_minimal()
+```
+This box plot supports our suspicion that people in their mid 20's are generally in a normal range of healthy weight, likely because most people exercise while in their mid-20's.
+
+```{r}
+# Histograms
+# age 
+ggplot(data, aes(x = Age)) +
+  geom_histogram(binwidth = 1, color = "blue", fill = "skyblue", alpha = 1) +
+  labs(title = "Distribution of Age",
+       x = "Age",
+       y = "Frequency") +
+  scale_x_continuous(breaks = seq(5, 65, by = 5)) 
+
+# height
+ggplot(data, aes(x = Height)) +
+  geom_histogram(binwidth = 1, color = "blue", fill = "skyblue", alpha = 1) +
+  labs(title = "Distribution of Height",  
+       x = "Height",                     
+       y = "Frequency")
+
+# weight
+ggplot(data, aes(x = Weight)) +
+  geom_histogram(binwidth = 1, color = "blue", fill = "skyblue", alpha = 1) +
+  labs(title = "Distribution of Weight", 
+       x = "Weight",                     
+       y = "Frequency") +
+  scale_x_continuous(breaks = seq(50, 180, by = 10))  
+
+# ConsFoodBetwMeal
+# Convert 'ConsFoodBetwMeal' to a numeric variable
+data$ConsFoodBetwMeal <- as.numeric(as.character(data$ConsFoodBetwMeal))
+
+# Create histogram using ggplot
+ggplot(data = data, aes(x = ConsFoodBetwMeal)) +
+  geom_histogram(binwidth = 1, fill = "skyblue", color = "blue") +
+  labs(x = "Consistency of Food Consumption Between Meals", y = "Frequency", title = "Histogram of Consistency of Food Consumption Between Meals")
+
+# FCvegetables
+ggplot(data, aes(x = FCvegetables)) +
+  geom_histogram(color = "blue", fill = "skyblue", alpha = 1, binwidth = 0.1, bins = 30) +
+  labs(title = "Distribution of FCvegetables",
+       x = "FCvegetables",
+       y = "Frequency")
+
+# NumMainMeals
+ggplot(data, aes(x = NumMainMeals)) +
+  geom_histogram( color = "blue", fill = "skyblue", alpha = 1, binwidth = 0.1, bins = 30) +
+  labs(title = "Distribution of NumMainMeals",
+       x = "NumMainMeals",
+       y = "Frequency") 
+
+# DayWater
+ggplot(data, aes(x = DayWater)) +
+  geom_histogram(color = "blue", fill = "skyblue", alpha = 1, binwidth = 0.1, bins = 30) +
+  labs(title = "Distribution of CH2O",
+       x = "DayWater",
+       y = "Frequency")
+
+# PhysicalActFreq
+ggplot(data, aes(x = PhysicalActFreq)) +
+  geom_histogram( color = "blue", fill = "skyblue", alpha = 1, binwidth = 0.1, bins = 30) +
+  labs(title = "Distribution of PhysicalActFreq",
+       x = "PhysicalActFreq",
+       y = "Frequency")
+
+# TechUsePerDay
+ggplot(data, aes(x = TechUsePerDay)) +
+  geom_histogram(color = "blue", fill = "skyblue", alpha = 1, binwidth = 0.1, bins = 30) +
+  labs(title = "Distribution of TechUsePerDay",
+       x = "TechUsePerDay",
+       y = "Frequency")
+```
+
+```{r}
+# Bar plots of factor/binary variables
+# gender
+ggplot(data = data, aes(x = factor(Gender))) +
+  geom_bar(fill = "skyblue", color = "blue") +
+  labs(x = "Gender", y = "Count", title = "Bar Plot of Gender")
+
+ggplot(data = data, aes(x = factor(ObesityLevel))) +
+  geom_bar(fill = "skyblue", color = "blue") +
+  labs(x = "Obesity Level", y = "Frequency", title = "Histogram of Obesity Levels")
+
+ggplot(data = data, aes(x = factor(family_history_with_overweight))) +
+  geom_bar(fill = "skyblue", color = "blue") +
+  labs(x = "Family History with Overweight", y = "Frequency", title = "Bar Plot of Family History with Overweight")
+
+ggplot(data = data, aes(x = factor(FCHighCal))) +
+  geom_bar(fill = "skyblue", color = "blue") +
+  labs(x = "Family Consumes High-Calorie Food", y = "Frequency", title = "Bar Plot of Family High-Calorie Food Consumption")
+
+ggplot(data = data, aes(x = factor(SMOKE))) +
+  geom_bar(fill = "skyblue", color = "blue") +
+  labs(x = "Smoking Status", y = "Count", title = "Bar Plot of Smoking Status")
+
+ggplot(data = data, aes(x = factor(MonitorCalory))) +
+  geom_bar(fill = "skyblue", color = "blue") +
+  labs(x = "Monitor Calorie Intake", y = "Count", title = "Bar Plot of Monitor Calorie Intake")
+
+ggplot(data = data, aes(x = factor(Alcohol))) +
+  geom_bar(fill = "skyblue", color = "blue") +
+  labs(x = "Alcohol Consumption", y = "Count", title = "Bar Plot of Alcohol Consumption")
+
+ggplot(data = data, aes(x = factor(MTRANS))) +
+  geom_bar(fill = "skyblue", color = "blue") +
+  labs(x = "Transportation Mode", y = "Count", title = "Bar Plot of Transportation Mode")
+```
+
+```{r}
+# Boxplots
+# Age
+ggplot(data, aes(x = Gender, y = Age)) +
+  geom_boxplot(fill = "lightblue", color = "blue", outlier.colour = 'red') +
+  labs(title = "Box plot of Age by Gender",
+       x = "Gender",
+       y = "Age") +
+  theme_minimal()  +
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# Height
+ggplot(data = data, aes(x = Gender, y = Height)) +
+  geom_boxplot(fill = "skyblue", color = "blue", outlier.colour = 'red') +
+  labs(x = "Gender", y = "Height", title = "Box Plot of Height by Gender") +
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# Weight
+ggplot(data, aes(x = Gender, y = Weight)) +
+  geom_boxplot(fill = "lightblue", color = "blue", outlier.colour = 'red') +
+  labs(title = "Boxplot of Weight by Gender",
+       x = "Gender",
+       y = "Weight") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# FCvegetables
+ggplot(data, aes(x = Gender, y = FCvegetables)) +
+  geom_boxplot(fill = "lightblue", color = "blue", outlier.colour = 'red') +
+  labs(title = "Boxplot of Frequent Consumption of vegetables by Gender",
+       x = "Gender",
+       y = "FCvegetables") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# DayWater
+ggplot(data, aes(x = Gender, y = DayWater)) +
+  geom_boxplot(fill = "lightblue", color = "blue", outlier.colour = 'red') +
+  labs(title = "Boxplot of DayWater",
+       x = "Gender",  
+       y = "DayWater") +
+  theme_minimal()+
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# PhysicalActFreq
+ggplot(data, aes(x = Gender, y = PhysicalActFreq)) +
+  geom_boxplot(fill = "lightblue", color = "blue", outlier.colour = 'red') +
+  labs(title = "Boxplot of Frequency of Physical activity",
+       x = "Gender",
+       y = "PhysicalActFreq") +
+  theme_minimal()+
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# TechUsePerDay
+ggplot(data, aes(x = Gender, y = TechUsePerDay)) +
+  geom_boxplot(fill = "lightblue", color = "blue", outlier.colour = 'red') +
+  labs(title = "Boxplot of TechUsePerDay by Gender",
+       x = "Gender",  # Remove x-axis label
+       y = "TechUsePerDay") +
+  theme_minimal() +
+  scale_x_discrete(labels = c("Female", "Male"))
+```
+As seen in the summary statistics, most of the population of in their mid 20s, around 170 cm in height and 85kg in weight. We can see that females tend to consume more vegetables but males drink similar amounts of water per day. Males typically excercise more and both genders spend a similar amount of time using technology.
+```{r}
+# Plot side-by-sides of both continuous and factor
+# Weight & Obesity Level
+png <- ggplot(data = data, aes(x = factor(Gender), y = Weight, fill = ObesityLevel)) +
+  geom_boxplot() +
+  labs(x = "Gender", y = "Weight", fill = "Obesity Level") +
+  scale_fill_brewer(palette = "Set3") + 
+  theme_minimal()+
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# Weight & MTRANS
+ggplot(data = data, aes(x = factor(Gender), y = Weight, fill = MTRANS)) +
+  geom_boxplot() +
+  labs(x = "Gender", y = "Weight", fill = "MTRANS") +
+  scale_fill_brewer(palette = "Set3") + 
+  theme_minimal()+
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# Weight & FCHighCal
+ggplot(data = data, aes(x = factor(Gender), y = Weight, fill = FCHighCal)) +
+  geom_boxplot() +
+  labs(x = "Gender", y = "Weight", fill = "FCHighCal") +
+  scale_fill_brewer(palette = "Set3") + 
+  theme_minimal()+
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# Weight & family_history_with_overweight
+ggplot(data = data, aes(x = factor(Gender), y = Weight, fill = family_history_with_overweight)) +
+  geom_boxplot() +
+  labs(x = "Gender", y = "Weight", fill = "family_history_with_overweight") +
+  scale_fill_brewer(palette = "Set3") + 
+  theme_minimal()+
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# Weight & SMOKE
+ggplot(data = data, aes(x = factor(Gender), y = Weight, fill = SMOKE)) +
+  geom_boxplot() +
+  labs(x = "Gender", y = "Weight", fill = "SMOKE") +
+  scale_fill_brewer(palette = "Set3") + 
+  theme_minimal()+
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# Weight & MonitorCalory
+ggplot(data = data, aes(x = factor(Gender), y = Weight, fill = MonitorCalory)) +
+  geom_boxplot() +
+  labs(x = "Gender", y = "Weight", fill = "MonitorCalory") +
+  scale_fill_brewer(palette = "Set3") + 
+  theme_minimal()+
+  scale_x_discrete(labels = c("Female", "Male"))
+
+# Weight & Alcohol
+ggplot(data = data, aes(x = factor(Gender), y = Weight, fill = Alcohol)) +
+  geom_boxplot() +
+  labs(x = "Gender", y = "Weight", fill = "Alcohol") +
+  scale_fill_brewer(palette = "Set3") + 
+  theme_minimal()+
+  scale_x_discrete(labels = c("Female", "Male"))
+```
+In the first graph, there is a clear positive relationship between Weight & Obesity Level across both Genders. Interestingly, females reach obese levels 4 & 5 quicker than males. There's also a sharp increase to obese level 6 - conversly to males who have a consistent level across all levels of obesity.
+In the second graph, people who frequent method 4 seem to be generally more overweight than the other modes of transport.
+Lifestyle methods affect weight as indicated by Frequent Consumption of High Calories, calory monitoring, and alcohol consumption.
+The graph for family_history_with_overweight confirms the previous plots' conclusion that family history of obesity contibutes to an individuals weight.
+On the other hand, smoking had little effect on female weights, while males who smoke generally weigh more than those that don't.
+
+```{r}
+# Scatter plot of height vs. weight
+ggplot(data, aes(x = Height, y = Weight)) +
+  geom_point(color = "blue") +
+  labs(x = "Height", y = "Weight", title = "Relationship Between Height and Weight") +
+  theme_minimal()
+
+# Correlation analysis
+correlation <- cor(data$Height, data$Weight)
+print(paste("Correlation coefficient between height and weight:", correlation))
+
+# Regression analysis
+model <- lm(Weight ~ Height, data = data)
+summary(model)
+```
+The correlation coefficient between height and weight is approximately 0.414. This indicates a moderate positive linear relationship between height and weight.
+The coefficient for height is estimated to be approximately 1.250. This means that for every one-unit increase in height (e.g., 1 cm), the predicted weight increases by approximately 1.250 units (e.g., 1.25 pounds). Both the intercept and height coefficients have p-values much smaller than 0.05, indicating that they are statistically significant predictors of weight.
+
+```{r}
+# Convert ObesityLevel from factor to numeric
+data$ObesityLevel <- as.numeric(as.character(data$ObesityLevel))
+
+# Calculate Pearson correlation coefficient between weight and obesity level
+correlation_weight_obesity <- cor(data$Weight, data$ObesityLevel)
+
+# Print the correlation coefficient
+print(paste("Pearson correlation coefficient between weight and obesity level:", correlation_weight_obesity))
+
+```
+
+The correlation coefficient ranges from -1 to 1. A correlation coefficient close to 1 indicates a strong positive linear relationship between the two variables. In this case, a coefficient of 0.922 suggests a very strong positive linear relationship between weight and obesity level. This implies that as weight increases, obesity level tends to increase as well, and vice versa.
+
+It's important to note: Correlation does not imply causation. Even though weight and obesity level are highly correlated, it doesn't necessarily mean that changes in one variable cause changes in the other.
+Other factors could influence both weight and obesity level, or the relationship could be more complex than a simple linear association.
+
+```{r}
+# Subset the data into two groups: with and without family history of overweight
+with_history <- subset(data, family_history_with_overweight == 1)
+without_history <- subset(data, family_history_with_overweight == 0)
+
+# Create density plot for physical activity frequency for each group
+png1 <- ggplot() +
+  geom_density(data = with_history, aes(x = PhysicalActFreq), fill = "blue", alpha = 0.5) +
+  geom_density(data = without_history, aes(x = PhysicalActFreq), fill = "red", alpha = 0.5) +
+  labs(x = "Physical Activity Frequency", y = "Density", title = "Distribution of Physical Activity Frequency by Family History of Overweight") +
+  scale_fill_manual(values = c("blue", "red"), labels = c("With History", "Without History"))
+
+# Calculate summary statistics for physical activity frequency for each group
+summary_physical_activity <- data.frame(
+  Group = c("With History", "Without History"),
+  Mean = c(mean(with_history$PhysicalActFreq), mean(without_history$PhysicalActFreq)),
+  SD = c(sd(with_history$PhysicalActFreq), sd(without_history$PhysicalActFreq))
+)
+
+print(summary_physical_activity)
+```
+This density plot shows that objects without a familial history of obesity excercise more than those that do.
+
+```{r}
+# Scatterplots
+# Scatterplots of ObesityLevel(target var) with all variables
+ggplot(data, aes(x=ObesityLevel, y=Gender, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and Gender")
+
+ggplot(data, aes(x=ObesityLevel, y=Age, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and Age")
+
+ggplot(data, aes(x=ObesityLevel, y=Height, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and Height")
+
+ggplot(data, aes(x=ObesityLevel, y=Weight, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and Weight")
+
+ggplot(data, aes(x=ObesityLevel, y=family_history_with_overweight, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and family_history_with_overweight")
+
+ggplot(data, aes(x=ObesityLevel, y=FCHighCal, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and FCHC")
+
+ggplot(data, aes(x=ObesityLevel, y=FCvegetables, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and FCvegetables")
+
+ggplot(data, aes(x=ObesityLevel, y=NumMainMeals, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and NumMainMeals")
+
+ggplot(data, aes(x=ObesityLevel, y=ConsFoodBetwMeal, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and ConsFoodBetwMeal")
+
+ggplot(data, aes(x=ObesityLevel, y=SMOKE, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and SMOKE")
+
+ggplot(data, aes(x=ObesityLevel, y=MonitorCalory, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and MonitorCalory")
+
+ggplot(data, aes(x=ObesityLevel, y=DayWater, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and CH2O")
+
+ggplot(data, aes(x=ObesityLevel, y=PhysicalActFreq, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and PyysicalActFreq")
+
+ggplot(data, aes(x=ObesityLevel, y=TechUsePerDay, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and TechUsePerDay")
+
+ggplot(data, aes(x=ObesityLevel, y=MTRANS, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and MTRANS")
+
+ggplot(data, aes(x=ObesityLevel, y=Alcohol, group=1)) +geom_point() +geom_smooth(method = 'lm') +theme_bw() +ggtitle("Scatterplot ObesityLevel and Alcohol")
+```
+
+```{r}
+# Density plots
+# Age
+ggplot(data, aes(x = Age)) +
+  geom_density(fill = "lightblue", color = "blue", alpha = 0.5) +  
+  labs(title = "Density Plot of Age",
+       x = "Age",  
+       y = "Density") +  
+  theme_minimal()
+
+# FCvegetables
+ggplot(data, aes(x = FCvegetables)) +
+  geom_density(fill = "lightblue", color = "blue", alpha = 0.5) +  
+  labs(title = "Density Plot of FCvegetables",
+       x = "FCvegetables",  
+       y = "Density") +  
+  theme_minimal()
+
+# NumMainMeals
+ggplot(data, aes(x = NumMainMeals)) +
+  geom_density(fill = "lightblue", color = "blue", alpha = 0.5) +  
+  labs(title = "Density Plot of NumMainMeals",
+       x = "NumMainMeals",  
+       y = "Density") +  
+  theme_minimal()
+
+# DayWater
+ggplot(data, aes(x = DayWater)) +
+  geom_density(fill = "lightblue", color = "blue", alpha = 0.5) +  
+  labs(title = "Density Plot of DayWater",
+       x = "DayWater",  
+       y = "Density") + 
+  theme_minimal()
+
+# PhysicalActFreq
+ggplot(data, aes(x = PhysicalActFreq)) +
+  geom_density(fill = "lightblue", color = "blue", alpha = 0.5) +  
+  labs(title = "Density Plot of PhysicalActFreq",
+       x = "PhysicalActFreq",  
+       y = "Density") +  
+  theme_minimal()
+
+# TechUsePerDay
+ggplot(data, aes(x = TechUsePerDay)) +
+  geom_density(fill = "lightblue", color = "blue", alpha = 0.5) +  
+  labs(title = "Density Plot of TechUsePerDay",
+       x = "TechUsePerDay",  
+       y = "Density") +  
+  theme_minimal()
+
+# Height
+ggplot(data, aes(x = Height)) +
+  geom_density(fill = "lightblue", color = "blue", alpha = 0.5) +  
+  labs(title = "Density Plot of Height",
+       x = "Height",  
+       y = "Density") +  
+  theme_minimal()
+
+# Weight
+ggplot(data, aes(x = Weight)) +
+  geom_density(fill = "lightblue", color = "blue", alpha = 0.5) +  
+  labs(title = "Density Plot of Weight",
+       x = "Weight",  
+       y = "Density") +  
+  theme_minimal()
+```
+
+```{r}
+# Heatmap
+num_data <- data[, sapply(data, is.numeric)]
+
+# Calculate the correlation matrix on just the numeric data
+cor_matrix <- cor(num_data, use = "complete.obs")
+
+# Melt the correlation matrix into long format
+melted_matrix <- melt(cor_matrix)
+
+# Create the heatmap using ggplot2
+heatmap_plot <- ggplot(melted_matrix, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "green", high = "red", mid = "yellow", midpoint = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        axis.text.y = element_text(angle = 0, hjust = 1)) +
+  labs(x = '', y = '', fill = 'Correlation')
+
+# Print the heatmap plot
+print(heatmap_plot)
+```
+
+```{r}
+# Principal Component Analysis (PCA)
+# Split the data into training and test sets
+set.seed(123)
+splitIndex <- createDataPartition(data$ObesityLevel, p = 0.7, list = FALSE)
+train <- data[splitIndex, ]
+test <- data[-splitIndex, ]
+
+# Select only numeric columns (excluding the target variable)
+numeric_columns <- sapply(train[, names(train) != "ObesityLevel"], is.numeric)
+train_numeric <- train[, numeric_columns]
+
+# Scale the numeric training data
+train_scaled <- scale(train_numeric)
+
+# Apply PCA
+pca_result <- prcomp(train_scaled, center = TRUE, scale. = TRUE)
+attributes(pca_result)
+
+# Calculate the proportion of explained variance (PEV) from the std values
+pca_var <- pca_result$sdev^2
+pca_PEV <- pca_var/sum(pca_var)
+plot(pca_result)
+
+# plot the cumulative PEV
+opar <- par(no.readonly = TRUE)
+plot(
+  cumsum(pca_PEV),
+  ylim = c(0,1),
+  xlab = 'PC',
+  ylab = 'cumulative PEV',
+  pch = 20,
+  col = 'orange'
+)
+abline(h = 0.8, col = 'red', lty = 'dashed')
+par(opar)
+
+# Get and inspect the loadings
+pca_loadings <- pca_result$rotation
+pca_loadings
+```
+
+```{r}
+# Plot the loadings for the first six PCs as a barplot
+opar <- par(no.readonly = TRUE)
+colvector = c('red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'steelblue','pink','grey')
+labvector = c('PC1', 'PC2', 'PC3', 'PC4', 'PC5', 'PC6')
+barplot(
+  pca_loadings[,c(1:6)],
+  beside = T,
+  yaxt = 'n',
+  names.arg = labvector,
+  col = colvector,
+  ylim = c(-1,1),
+  border = 'white',
+  ylab = 'loadings'
+)
+axis(2, seq(-1,1,0.1))
+legend(
+  'bottomright',
+  bty = 'n',
+  col = colvector,
+  pch = 15,
+  row.names(pca_loadings)
+)
+par(opar)
+```
+
+```{r}
+# DBSCAN clustering
+# Select the first 6 principal components
+pcs <- pca_result$x[, 1:6]
+
+# Perform DBSCAN clustering with different parameter values
+dbscan_result <- dbscan(pcs, eps = 0.5, minPts = 5)
+
+# Print the clusters
+print(dbscan_result$cluster)
+
+# Visualize clusters if possible
+if (ncol(pcs) == 2) {
+  plot(pcs, col = dbscan_result$cluster + 1, pch = 20, main = "DBSCAN Clustering")
+} else if (ncol(pcs) == 3) {
+  scatter3D(pcs[,1], pcs[,2], pcs[,3], colvar = dbscan_result$cluster + 1, pch = 20, main = "DBSCAN Clustering")
+}
+
+# Evaluate clustering if ground truth labels are available
+# For example, using silhouette score
+silhouette_score <- silhouette(dbscan_result$cluster, dist(pcs))
+```
+The overall silhouette width is approximately -0.3845. Silhouette widths range from -1 to 1, where a high value indicates that the object is well matched to its own cluster and poorly matched to neighboring clusters. A negative value suggests that the object might be assigned to the wrong cluster. The median silhouette width is -0.5052, suggesting that half of the observations have a silhouette width less than this value.
+
+The maximum silhouette width is 0.9748, indicating a highly cohesive cluster. Overall, negative silhouette widths indicate potential issues with clustering, such as noisy data or suboptimal clustering parameters.
+
+```{r}
+# Hierarchichal clustering
+# First generate the distance matrix with euclidian distance
+dist_data <- dist(data[,-17], method = 'euclidian')
+# Apply complete linkage
+hc_data <- hclust(dist_data, method = 'complete')
+hc_data
+
+# plot the associated dendrogram
+plot(hc_data, hang = -0.1, labels = data$ObesityLevel)
+
+# 'cut' the dendrogram to select one partition with 6 groups
+hc_cluster_data <- cutree(hc_data, k = 6)
+```
+
+```{r}
+# K-means
+k_data = kmeans(data[,-17], 6)
+k_data
+
+# Get the cluster id from the kmeans object
+k_data_cluster <- k_data$cluster
+
+# Calculate the silhoutte score for the two cluster solutions
+sil_hc_data <- cluster::silhouette(hc_cluster_data, dist_data)
+sil_k_data <- cluster::silhouette(k_data_cluster, dist_data)
+
+# Plot the results of the silhoutte analysis for the two cluster solutions
+opar <- par(no.readonly = TRUE)
+par(mfrow = c(2,1))
+plot(sil_hc_data, border = 'steelblue')
+plot(sil_k_data, border = 'orange')
+par(opar)
+
+# Plot the k-means clus
+plot(sil_k_data, border = 'orange')
+```
+An average silhouette width above 0.5 is considered to indicate a strong structure and well-separated clusters. An average silhouette width between 0.25 and 0.5 is considered reasonable. The K-Means average (0.35) silhouette width is larger than the Hierarchical cluster (0.32), therefore the K-means cluster best fits the clusters in this data.
+
+```{r}
+# Export the transformed data to use in Google Collab
+write_csv(data, "Updated_data.csv")
+```
+
+# Random Forest Model
+```{r}
+# Create a train/test set
+# set random seed
+set.seed(1999)
+# create a 70/30 training/test set split
+n_rows <- nrow(data)
+# sample 70% (n_rows * 0.7) indices in the ranges 1:nrows
+training_idx <- sample(n_rows, n_rows * 0.7)
+# filter the data frame with the training indices (and the complement)
+training_data <- data[training_idx,]
+test_data <- data[-training_idx,]
+```
+
+```{r}
+# Decision tree training
+# Convert ObesityLevel to a factor
+training_data$ObesityLevel <- factor(training_data$ObesityLevel)
+
+# define a formula for predicting ObesityLevel
+data_ObesityLevel_formula = ObesityLevel ~ Gender + Age + Height + Weight + family_history_with_overweight + FCHighCal + FCvegetables + NumMainMeals + ConsFoodBetwMeal + SMOKE + DayWater + MonitorCalory + PhysicalActFreq + TechUsePerDay + Alcohol + MTRANS
+
+# train a decision tree
+tree_data_ObesityLevel <- tree(data_ObesityLevel_formula, data = training_data)
+
+# inspect the tree
+summary(tree_data_ObesityLevel)
+# plot the tree
+plot(tree_data_ObesityLevel)
+text(tree_data_ObesityLevel, pretty = 0)
+
+# prune the tree using cross-validation
+cv_data_ObesityLevel <- cv.tree(tree_data_ObesityLevel, FUN=prune.misclass)
+# create a table of tree size and classification error
+#   note: the cross-validation object has an attribute dev for the classification error
+cv_data_ObesityLevel_table <- data.frame(
+  size = cv_data_ObesityLevel$size,
+  error = cv_data_ObesityLevel$dev
+)
+
+# plot the cv_data_ObesityLevel_table
+plot(
+  cv_data_ObesityLevel_table,
+  xaxt = 'n',
+  yaxt = 'n'
+)
+axis(1, seq(1,max(cv_data_ObesityLevel_table$size)))
+axis(2, seq(50,150,5))
+
+# select the tree size with the minimum error
+pruned_tree_size <- cv_data_ObesityLevel_table[which.min(cv_data_ObesityLevel_table$error), 'size']
+
+# prune the tree to the required size
+pruned_tree_data_ObesityLevel <- prune.misclass(tree_data_ObesityLevel, best = pruned_tree_size)
+
+# inspect the pruned tree
+summary(pruned_tree_data_ObesityLevel)
+
+# plot the tree
+plot(pruned_tree_data_ObesityLevel)
+text(pruned_tree_data_ObesityLevel, pretty = 0)
+
+# compare the un/pruned trees
+par(mfrow = c(1,2))
+plot(tree_data_ObesityLevel)
+text(tree_data_ObesityLevel, pretty = 0)
+plot(pruned_tree_data_ObesityLevel)
+text(pruned_tree_data_ObesityLevel, pretty = 0)
+par(mfrow = c(1,1))
+```
+
+```{r}
+# Decision tree prediction
+# compute the prediction for un/pruned trees
+#   note: the Sales attribute (column 1) is excluded from the test data set
+tree_data_ObesityLevel_pred <- predict(tree_data_ObesityLevel, test_data[,-17], type= "class")
+pruned_tree_data_ObesityLevel_pred <- predict(pruned_tree_data_ObesityLevel, test_data[,-17], type= "class")
+
+# create a table with actual values and the two predictions
+data_ObesityLevel_results <- data.frame(
+  actual = test_data$ObesityLevel,
+  unpruned = tree_data_ObesityLevel_pred,
+  pruned = pruned_tree_data_ObesityLevel_pred
+)
+
+# create a contingency table for the actual VS predicted for both predictions
+unpruned_results_table <- table(data_ObesityLevel_results[,c('actual', 'unpruned')])
+unpruned_results_table
+pruned_results_table <- table(data_ObesityLevel_results[,c('actual', 'pruned')])
+pruned_results_table
+
+# calculate accuracy from each contigency table
+acc_unpruned <- sum(diag(unpruned_results_table)) / sum(unpruned_results_table)
+acc_unpruned
+acc_pruned <- sum(diag(pruned_results_table)) / sum(pruned_results_table)
+acc_pruned
+```
+
+```{r}
+# Random forest training
+  # train a model with random forest
+  rf_data_ObesityLevel <- randomForest(data_ObesityLevel_formula, ntree = 500, importance = T, data = training_data)
+
+# plot the error rates
+plot(rf_data_ObesityLevel, main = "Random Forest error rates")
+legend('topright', colnames(rf_data_ObesityLevel$err.rate), bty = 'n', lty = c(1,2,3), col = c(1:3))
+
+# plot the variable importance according to the model
+varImpPlot(rf_data_ObesityLevel, type = 1, main = "Variable importance according to the model")
+```
+
+```{r}
+# Random forest prediction
+# compute the prediction for the random forest model
+rf_data_ObesityLevel_pred <- predict(rf_data_ObesityLevel, test_data[,-17], type= "class")
+
+# create a contingency table for the actual VS predicted for the random forest model
+rf_results_table <- table(rf = rf_data_ObesityLevel_pred,  actual = test_data$ObesityLevel)
+rf_results_table
+
+# calculate accuracy from each contigency table
+acc_rf <- sum(diag(rf_results_table)) / sum(rf_results_table)
+acc_rf
+```
+The Random Forest model achieved an accuracy of approximately 89.53% on the test dataset compared to the Decision Tree's 76%. The Random Forest model outperforms the decision tree model in terms of accuracy. It's often beneficial to consider other metrics such as precision, recall, and F1-score for a more comprehensive evaluation.
+
+```{r}
+# Ensure that factor levels match
+rf_data_ObesityLevel_pred <- as.factor(rf_data_ObesityLevel_pred)
+test_data$ObesityLevel <- as.factor(test_data$ObesityLevel)
+
+# Compute confusion matrix
+conf_matrix_rf <- confusionMatrix(rf_data_ObesityLevel_pred, test_data$ObesityLevel)
+
+# Extract precision, recall, and F1-score from the confusion matrix
+precision_rf <- (conf_matrix_rf$table[1,1] / sum(conf_matrix_rf$table[1,]))
+recall_rf <- (conf_matrix_rf$table[1,1] / sum(conf_matrix_rf$table[,1]))
+f1_score_rf <- 2 * ((precision_rf * recall_rf) / (precision_rf + recall_rf))
+
+# Print the results
+cat("Precision (Random Forest): ", precision_rf, "\n")
+cat("Recall (Random Forest): ", recall_rf, "\n")
+cat("F1 Score (Random Forest): ", f1_score_rf, "\n")
+```
+This Random Forest model has a precision of approximately 92.71% - when it predicts an instance as positive (e.g., a specific class of obesity level), it is correct about 92.71% of the time. The model has a recall of approximately 92.46%, indicating that it correctly identifies about 92.46% of all instances belonging to a class of obesity level. The F1 score is a single metric that considers both precision and recall, at of approximately 92.58%, this indicates overall good performance in correctly identifying positive instances while minimizing false positives and false negatives.
+
+```{r}
+# Predict probabilities for all classes
+rf_data_ObesityLevel_prob_all <- predict(rf_data_ObesityLevel, test_data, type = "prob")
+# Extract probabilities for the positive class ("1")
+rf_data_ObesityLevel_prob <- rf_data_ObesityLevel_prob_all[, "1"]
+# Data frame with probability scores for the prediction of True
+prob_df <- data.frame(prob_score = rf_data_ObesityLevel_prob)
+```
+
+```{r}
+# Generate confusion matrix for the tree model
+tree_confmat <- confusionMatrix(data = tree_data_ObesityLevel_pred, 
+                                reference = test_data$ObesityLevel, 
+                                positive = "1")
+
+# Generate confusion matrix for the random forest model
+rf_confmat <- confusionMatrix(data = rf_data_ObesityLevel_pred, 
+                              reference = test_data$ObesityLevel, 
+                              positive = "1")
+
+# Print confusion matrices
+tree_confmat
+rf_confmat
+
+# Prepare data frames for ROC curve
+obesitylevel_prob_df <- data.frame(
+  tree = rf_data_ObesityLevel_prob,
+  rf = rf_data_ObesityLevel_prob
+)
+obesitylevel_actual_df <- data.frame(
+  tree = test_data$ObesityLevel,
+  rf = test_data$ObesityLevel
+)
+
+# Generate binary labels for the positive class (e.g., class "1") and all other classes
+binary_labels <- ifelse(test_data$ObesityLevel == "1", "1", "0")
+
+# Generate prediction objects for each model
+tree_ROC_pred <- prediction(as.numeric(obesitylevel_prob_df$tree), binary_labels)
+rf_ROC_pred <- prediction(as.numeric(obesitylevel_prob_df$rf), binary_labels)
+
+# Calculate True Positive Rate (TPR) and False Positive Rate (FPR) for each model
+tree_ROC_perf <- performance(tree_ROC_pred, "tpr", "fpr")
+rf_ROC_perf <- performance(rf_ROC_pred, "tpr", "fpr")
+```
+
+```{r}
+# Convert predicted probabilities to binary outcome
+rf_data_ObesityLevel_pred <- as.factor(rf_data_ObesityLevel_pred)
+tree_data_ObesityLevel_pred <- as.factor(tree_data_ObesityLevel_pred)
+test_data$ObesityLevel <- as.factor(test_data$ObesityLevel)
+
+# Compute ROC curve for random forest model
+roc_rf <- roc(test_data$ObesityLevel, as.numeric(rf_data_ObesityLevel_pred), smooth = TRUE)
+auc_rf <- auc(roc_rf)
+
+# Compute ROC curve for decision tree model
+roc_tree <- roc(test_data$ObesityLevel, as.numeric(tree_data_ObesityLevel_pred), smooth = TRUE)
+auc_tree <- auc(roc_tree)
+
+# Plot ROC curves for both models with adjusted x-axis limits
+plot(roc_rf, col = "navy", main = "ROC Curve for Random Forest and Decision Tree Model", cex.main = 1.4,
+     xlab = "False Positive Rate", ylab = "True Positive Rate", xlim = c(1, 0))
+plot(roc_tree, col = "darkorange", add = TRUE)
+
+# Add legend with AUC values
+legend_text <- c(paste("Random Forest (AUC =", round(auc_rf, 3), ")"),
+                 paste("Decision Tree (AUC =", round(auc_tree, 3), ")"))
+legend("bottomright", legend = legend_text, col = c("navy", "darkorange"), lty = 1, bty = 'n', cex = 1.2)
+
+# Add grid lines
+grid(col = "lightgray")
+```
+
+```{r}
+# Cross-Validation
+ctrl <- trainControl(method = "cv", number = 5)
+cv_results <- train(ObesityLevel ~ ., data = training_data, method = "rf", trControl = ctrl)
+print(cv_results)
+```
+The Random Forest model, after testing different configurations, achieved the highest accuracy (around 89.89%) and the highest kappa score (around 88.14%) among all tested models. This means that it made accurate predictions most of the time and performed well in terms of overall agreement beyond what would be expected by chance alone.
+
+# Random forest for PC's
+```{r}
+# Scale numerical features
+scaled_training_data <- training_data
+scaled_training_data[, numeric_columns] <- scale(training_data[, numeric_columns])
+
+# Convert categorical variables to factors if not already done
+training_data$Gender <- as.factor(training_data$Gender)
+
+# Create a test/training dataset
+set.seed(123)
+train_indices <- sample(1:nrow(training_data), 0.8 * nrow(training_data))
+train_data <- training_data[train_indices, ]
+validation_data <- training_data[-train_indices, ]
+
+# Train Random Forest Model
+rf_pca_model <- randomForest(ObesityLevel ~ ., data = train_data, ntree = 500)
+
+# Evaluate Model Performance
+rf_pred <- predict(rf_pca_model, newdata = validation_data)
+conf_matrix <- confusionMatrix(rf_pred, validation_data$ObesityLevel)
+print(conf_matrix)
+```
+
+```{r}
+# Extract values from the printed output
+sensitivity <- c(0.9379, 0.8871, 0.75000, 0.82985, 0.8703, 0.9715, 1.0000)
+specificity <- c(0.9902, 0.9769, 0.97276, 0.97550, 0.9848, 0.9942, 0.9991)
+precision <- c(0.9300, 0.8733, 0.76014, 0.81525, 0.9018, 0.9715, 0.9966)
+neg_pred_value <- c(0.9914, 0.9796, 0.97126, 0.97778, 0.9794, 0.9942, 1.0000)
+prevalence <- c(0.1218, 0.1524, 0.10323, 0.11528, 0.1380, 0.1693, 0.1999)
+detection_rate <- c(0.1142, 0.1352, 0.07743, 0.09566, 0.1201, 0.1645, 0.1999)
+detection_prevalence <- c(0.1228, 0.1549, 0.10186, 0.11734, 0.1332, 0.1693, 0.2006)
+balanced_accuracy <- c(0.9640, 0.9320, 0.86138, 0.90267, 0.9276, 0.9829, 0.9996)
+
+# Print statistics by class
+cat("\nStatistics by Class:\n")
+cat("Sensitivity (Recall):\n", sensitivity, "\n")
+cat("Specificity:\n", specificity, "\n")
+cat("Positive Predictive Value (Precision):\n", precision, "\n")
+cat("Negative Predictive Value:\n", neg_pred_value, "\n")
+cat("Prevalence:\n", prevalence, "\n")
+cat("Detection Rate:\n", detection_rate, "\n")
+cat("Detection Prevalence:\n", detection_prevalence, "\n")
+cat("Balanced Accuracy:\n", balanced_accuracy, "\n")
+```
+
+```{r}
+# Convert confusion matrix values to a matrix object
+conf_matrix <- as.table(conf_matrix)
+
+# Calculate overall accuracy
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+# Print overall accuracy
+cat("Overall Accuracy:", accuracy, "\n")
+
+# Calculate precision for each class
+precision <- diag(conf_matrix) / rowSums(conf_matrix)
+# Print precision for each class
+cat("\nPrecision for each class:\n")
+cat(precision, "\n")
+
+# Calculate recall (sensitivity) for each class
+recall <- diag(conf_matrix) / colSums(conf_matrix)
+# Print recall for each class
+cat("\nRecall (Sensitivity) for each class:\n")
+cat(recall, "\n")
+
+# Calculate F1 score for each class
+f1_score <- 2 * precision * recall / (precision + recall)
+# Print F1 score for each class
+cat("\nF1 Score for each class:\n")
+cat(f1_score, "\n")
+
+```
+
+```{r}
+# Calculate overall precision, recall, and F1 score for the Random Forest with PCA
+overall_precision <- mean(precision, na.rm = TRUE)
+overall_recall <- mean(recall, na.rm = TRUE)
+overall_f1_score <- mean(f1_score, na.rm = TRUE)
+
+# Print overall precision, recall, and F1 score
+cat("Overall Precision (Random Forest with PCA):", overall_precision, "\n")
+cat("Overall Recall (Random Forest with PCA):", overall_recall, "\n")
+cat("Overall F1 Score (Random Forest with PCA):", overall_f1_score, "\n")
+```
+
+```{r}
+# plot the error rates
+plot(rf_pca_model, main = "Random Forest error rates")
+legend('topright', colnames(rf_pca_model$err.rate), bty = 'n', lty = c(1,2,3), col = c(1:3))
+
+# Plot the variable importance according to the model
+varImpPlot(rf_pca_model)
+```
+Untransformed Data:
+Optimal Model: mtry = 11
+Accuracy: 89.89%
+Kappa: 88.14%
+
+Transformed Data:
+Accuracy: 90.71%
+Kappa: 89.07%
+
+Comparison:
+The model built on the transformed data performs slightly better in terms of both accuracy and kappa compared to the model built on the untransformed data.
+Sensitivity, specificity, positive predictive value, and negative predictive value are also higher for most classes in the model using transformed data, indicating better performance in classifying each class.
+Balanced accuracy is higher in the model using transformed data, suggesting better overall performance across classes.
+In conclusion, transforming the data before applying the random forest model has led to a slight improvement in model performance for predicting ObesityLevel.
